@@ -3,6 +3,10 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/lukidown
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       - postgres
       - redis

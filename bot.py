@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ButtonStyle, ParseMode
+from pyrogram.errors import FloodWait, RPCError
 from pyrogram.types import (
     CallbackQuery,
     ChosenInlineResult,
@@ -437,8 +438,19 @@ async def _store_inline_cache(user_id: int, media_key: str, result, want_audio: 
 
 async def _safe_edit(msg: Message, text: str, reply_markup=None):
     """Edit message text safely ignoring exceptions."""
+    if msg is None:
+        return
+    if getattr(msg, "text", None) == text:
+        return
     try:
         await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+    except FloodWait as e:
+        log.warning("FloodWait of %s seconds in _safe_edit, sleeping...", e.value)
+        await asyncio.sleep(e.value + 1)
+        try:
+            await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        except Exception as ex:
+            log.debug("Failed retry in _safe_edit: %s", ex)
     except Exception as e:  # noqa: BLE001
         log.debug("Failed to edit text safely: %s", e)
 
@@ -830,19 +842,14 @@ async def _run_worker(worker_no: int):
             await asyncio.sleep(1)
 
 
-async def _ensure_user_lang(union: Message | CallbackQuery) -> str | None:
-    """Ensure user has selected a language. If not, send language prompt and return None."""
+async def _ensure_user_lang(union: Message | CallbackQuery) -> str:
+    """Ensure user has a language set. Defaults to Telegram language_code or 'ru'."""
     user_id = union.from_user.id
     lang = await media_service.storage.get_user_language(user_id)
     if lang is None:
-        text = get_text(None, "select_language_prompt")
-        markup = _keyboard_language()
-        if isinstance(union, CallbackQuery):
-            await union.answer()
-            await union.message.reply_text(text, reply_markup=markup)
-        else:
-            await union.reply_text(text, reply_markup=markup)
-        return None
+        user_code = getattr(union.from_user, "language_code", None) or "ru"
+        lang = "ru" if str(user_code).lower().startswith("ru") else "en"
+        await media_service.storage.set_user_language(user_id, lang)
     return lang
 
 
